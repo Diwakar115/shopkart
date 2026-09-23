@@ -1,0 +1,13 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Terraform variable files
+*.tfvars
+!*.tfvars.example
+
+# Environment files
+.env
+.env.*
+!.env.example
