@@ -56,6 +56,14 @@ jobs:
               print(f"{key}: {claims.get(key)}")
           PY
 
+       - name: Show GitHub repository identity
+        run: |
+        echo "Repository: ${{ github.repository }}"
+        echo "Repository ID: ${{ github.event.repository.id }}"
+        echo "Owner: ${{ github.repository_owner }}"
+        echo "Owner ID: ${{ github.event.repository.owner.id }}"
+        echo "Ref: ${{ github.ref }}"
+
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
