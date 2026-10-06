@@ -1,5 +1,4 @@
 name: ShopKart - Build and Push to ECR
-
 on:
   push:
     branches:
@@ -21,13 +20,15 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
+      - name: OIDC Debug
+        uses: actions-oidc-debugger@main
+
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::382755779648:role/Shopkart-GitHub-Actions-Role
           role-session-name: ShopKartGitHubActions
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: "382755779648"
 
       - name: Verify AWS identity
         run: aws sts get-caller-identity
