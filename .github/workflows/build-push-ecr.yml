@@ -21,48 +21,13 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Debug OIDC claims
-        shell: bash
+      - name: Show GitHub repository identity
         run: |
-          TOKEN=$(curl -sSL \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" |
-            python -c "import sys, json; print(json.load(sys.stdin)['value'])")
-
-          python - "$TOKEN" <<'PY'
-          import sys
-          import json
-          import base64
-
-          token = sys.argv[1]
-          payload = token.split(".")[1]
-          payload += "=" * (-len(payload) % 4)
-
-          claims = json.loads(
-              base64.urlsafe_b64decode(payload)
-          )
-
-          for key in [
-              "iss",
-              "sub",
-              "aud",
-              "repository",
-              "repository_id",
-              "repository_owner",
-              "ref",
-              "workflow",
-              "actor"
-          ]:
-              print(f"{key}: {claims.get(key)}")
-          PY
-
-       - name: Show GitHub repository identity
-        run: |
-        echo "Repository: ${{ github.repository }}"
-        echo "Repository ID: ${{ github.event.repository.id }}"
-        echo "Owner: ${{ github.repository_owner }}"
-        echo "Owner ID: ${{ github.event.repository.owner.id }}"
-        echo "Ref: ${{ github.ref }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Repository ID: ${{ github.event.repository.id }}"
+          echo "Owner: ${{ github.repository_owner }}"
+          echo "Owner ID: ${{ github.event.repository.owner.id }}"
+          echo "Ref: ${{ github.ref }}"
 
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -72,5 +37,4 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Verify AWS identity
-        run: |
-          aws sts get-caller-identity
+        run: aws sts get-caller-identity
