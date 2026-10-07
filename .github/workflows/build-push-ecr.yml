@@ -49,6 +49,7 @@ jobs:
         run: |
           docker build \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -f ./application/Dockerfile \
             ./application
 
       - name: Push Docker image to ECR
