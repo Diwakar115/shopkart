@@ -59,3 +59,28 @@ jobs:
         run: |
           docker push \
             $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+    
+    
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name shopkart-eks \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Verify EKS access
+        run: |
+          kubectl auth can-i get deployments
+          kubectl auth can-i patch deployments
+          kubectl get deployment shopkart
+
+      - name: Deploy image to EKS
+        env:
+          ECR_REGISTRY: 382755779648.dkr.ecr.us-east-1.amazonaws.com
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          kubectl set image deployment/shopkart \
+            shopkart=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Verify deployment rollout
+        run: |
+          kubectl rollout status deployment/shopkart --timeout=180s
