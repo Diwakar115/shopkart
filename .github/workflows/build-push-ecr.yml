@@ -12,6 +12,8 @@ permissions:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: shopkart-repo
+  ECR_REGISTRY: 382755779648.dkr.ecr.us-east-1.amazonaws.com
+  IMAGE_TAG: ${{ github.sha }}-${{ github.run_attempt }}
 
 jobs:
   build-and-push:
@@ -43,23 +45,15 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build Docker image
-        env:
-          ECR_REGISTRY: 382755779648.dkr.ecr.us-east-1.amazonaws.com
-          IMAGE_TAG: ${{ github.sha }}-${{ github.run_attempt }}
         run: |
           docker build \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
             -f ./application/Dockerfile \
             ./application
 
       - name: Push Docker image to ECR
-        env:
-          ECR_REGISTRY: 382755779648.dkr.ecr.us-east-1.amazonaws.com
-          IMAGE_TAG: ${{ github.sha }}-${{ github.run_attempt }}cd
         run: |
-          docker push \
-            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-    
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
     
      
       - name: Temporarily allow runner IP, deploy, and restore
@@ -138,11 +132,14 @@ jobs:
                 done
               fi
 
+               restore_config="$(jq -cn \
+                --argjson cidrs "$ORIGINAL_CIDRS" \
+                '{endpointPublicAccess:true,endpointPrivateAccess:true,publicAccessCidrs:$cidrs}')"
+
               restore_id="$(aws eks update-cluster-config \
                 --name "$CLUSTER" \
                 --region "$REGION" \
-                --resources-vpc-config \
-                "endpointPublicAccess=true,endpointPrivateAccess=true,publicAccessCidrs=$ORIGINAL_CIDRS" \
+                --resources-vpc-config "$restore_config" \
                 --query 'update.id' \
                 --output text 2>/dev/null)"
 
