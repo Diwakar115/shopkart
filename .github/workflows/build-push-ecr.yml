@@ -55,32 +55,159 @@ jobs:
       - name: Push Docker image to ECR
         env:
           ECR_REGISTRY: 382755779648.dkr.ecr.us-east-1.amazonaws.com
-          IMAGE_TAG: ${{ github.sha }}-${{ github.run_attempt }}
+          IMAGE_TAG: ${{ github.sha }}-${{ github.run_attempt }}cd
         run: |
           docker push \
             $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
     
     
-      - name: Update kubeconfig for EKS
-        run: |
-          aws eks update-kubeconfig \
-            --name shopkart-eks \
-            --region ${{ env.AWS_REGION }}
-
-      - name: Verify EKS access
-        run: |
-          kubectl auth can-i get deployments
-          kubectl auth can-i patch deployments
-          kubectl get deployment shopkart
-
-      - name: Deploy image to EKS
+     
+      - name: Temporarily allow runner IP, deploy, and restore
+        shell: bash
         env:
           ECR_REGISTRY: 382755779648.dkr.ecr.us-east-1.amazonaws.com
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: ${{ github.sha }}-${{ github.run_attempt }}
         run: |
-          kubectl set image deployment/shopkart \
-            shopkart=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          set -Eeuo pipefail
 
-      - name: Verify deployment rollout
-        run: |
-          kubectl rollout status deployment/shopkart --timeout=180s
+          REGION="us-east-1"
+          CLUSTER="shopkart-eks"
+          UPDATE_ID=""
+          RESTORE_NEEDED="false"
+
+          wait_for_update() {
+            local id="$1"
+            local status=""
+
+            for attempt in $(seq 1 40); do
+              status="$(aws eks describe-update \
+                --name "$CLUSTER" \
+                --region "$REGION" \
+                --update-id "$id" \
+                --query 'update.status' \
+                --output text)"
+
+              echo "EKS update status: $status"
+
+              case "$status" in
+                Successful) return 0 ;;
+                Failed)
+                  aws eks describe-update \
+                    --name "$CLUSTER" \
+                    --region "$REGION" \
+                    --update-id "$id" \
+                    --query 'update.errors' \
+                    --output json
+                  return 1
+                  ;;
+              esac
+
+              sleep 15
+            done
+
+            echo "Timed out waiting for EKS update."
+            return 1
+          }
+
+          cleanup() {
+            local result=$?
+            local restore_id=""
+            local restored="false"
+
+            trap - EXIT
+
+            if [[ "$RESTORE_NEEDED" == "true" ]]; then
+              echo "Restoring original EKS public IP allowlist..."
+              set +e
+
+              # Finish waiting for the temporary update if necessary.
+              if [[ -n "$UPDATE_ID" ]]; then
+                for attempt in $(seq 1 40); do
+                  status="$(aws eks describe-update \
+                    --name "$CLUSTER" \
+                    --region "$REGION" \
+                    --update-id "$UPDATE_ID" \
+                    --query 'update.status' \
+                    --output text 2>/dev/null)"
+
+                  if [[ "$status" != "InProgress" ]]; then
+                    break
+                  fi
+
+                  sleep 15
+                done
+              fi
+
+              restore_id="$(aws eks update-cluster-config \
+                --name "$CLUSTER" \
+                --region "$REGION" \
+                --resources-vpc-config \
+                "endpointPublicAccess=true,endpointPrivateAccess=true,publicAccessCidrs=$ORIGINAL_CIDRS" \
+                --query 'update.id' \
+                --output text 2>/dev/null)"
+
+              if [[ -n "$restore_id" ]]; then
+                wait_for_update "$restore_id"
+                if [[ $? -eq 0 ]]; then
+                  restored="true"
+                fi
+              fi
+
+              if [[ "$restored" != "true" ]]; then
+                echo "::error::Failed to confirm restoration. Check the EKS public access CIDRs immediately."
+                result=1
+              else
+                echo "Original EKS allowlist restored."
+              fi
+            fi
+
+            exit "$result"
+          }
+
+          trap cleanup EXIT
+
+          # Find the public IP used by this GitHub Actions runner.
+          RUNNER_IP="$(curl -4 -fsS https://checkip.amazonaws.com | tr -d '\r\n')"
+          RUNNER_CIDR="${RUNNER_IP}/32"
+          echo "Runner CIDR: $RUNNER_CIDR"
+
+          # Save the current allowlist.
+          ORIGINAL_CIDRS="$(aws eks describe-cluster \
+            --name "$CLUSTER" \
+            --region "$REGION" \
+            --query 'cluster.resourcesVpcConfig.publicAccessCidrs' \
+            --output json)"
+
+          # Add the runner IP without removing existing allowed IPs.
+          NEW_CIDRS="$(jq -cn \
+            --argjson original "$ORIGINAL_CIDRS" \
+            --arg runner "$RUNNER_CIDR" \
+            'if ($original | index($runner)) then $original
+             else $original + [$runner] end')"
+
+          # Restore even if the update or deployment subsequently fails.
+          RESTORE_NEEDED="true"
+
+          UPDATE_ID="$(aws eks update-cluster-config \
+            --name "$CLUSTER" \
+            --region "$REGION" \
+            --resources-vpc-config \
+            "$(jq -cn --argjson cidrs "$NEW_CIDRS" \
+              '{endpointPublicAccess:true,endpointPrivateAccess:true,publicAccessCidrs:$cidrs}')" \
+            --query 'update.id' \
+            --output text)"
+
+          wait_for_update "$UPDATE_ID"
+
+          # Configure kubectl and deploy the pushed ECR image.
+          aws eks update-kubeconfig \
+            --name "$CLUSTER" \
+            --region "$REGION"
+
+          kubectl set image deployment/shopkart \
+            shopkart="$ECR_REGISTRY/shopkart-repo:$IMAGE_TAG" \
+            -n default
+
+          kubectl rollout status deployment/shopkart \
+            -n default \
+            --timeout=180s
