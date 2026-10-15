@@ -3,11 +3,15 @@ FROM node:24-alpine
 
 WORKDIR /app
 
-# Upgrade the bundled npm toolchain to patched dependencies
-RUN npm install --global npm@latest
-
 COPY package*.json ./
-RUN npm ci --omit=dev
+
+RUN npm ci --omit=dev \
+    && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm \
+              /usr/local/bin/npm \
+              /usr/local/bin/npx \
+              /root/.npm \
+              /home/node/.npm
 
 COPY server.js .
 COPY application.js .
@@ -17,5 +21,4 @@ EXPOSE 3000
 
 USER node
 
-CMD ["npm", "start"]
-
+CMD ["node", "server.js"]
