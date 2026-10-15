@@ -51,11 +51,22 @@ jobs:
             -f ./application/Dockerfile \
             ./application
 
+
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
       - name: Push Docker image to ECR
         run: |
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-    
-     
+
+
       - name: Temporarily allow runner IP, deploy, and restore
         shell: bash
         env:
