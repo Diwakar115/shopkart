@@ -91,19 +91,23 @@ jobs:
               --output json
           }
 
+
           config_matches_original() {
             local current_config=""
             current_config="$(get_access_config 2>/dev/null)" || return 1
 
-            [[ "$(jq -cS . <<< "$current_config")" == "$(jq -cS . <<< "$ORIGINAL_CONFIG")" ]]
+            [[ "$(jq -cS '.publicAccessCidrs |= sort' <<< "$current_config")" == \
+              "$(jq -cS '.publicAccessCidrs |= sort' <<< "$ORIGINAL_CONFIG")" ]]
           }
 
           config_matches_temporary() {
             local current_config=""
             current_config="$(get_access_config 2>/dev/null)" || return 1
 
-            [[ "$(jq -cS . <<< "$current_config")" == "$(jq -cS . <<< "$TEMP_CONFIG")" ]]
+            [[ "$(jq -cS '.publicAccessCidrs |= sort' <<< "$current_config")" == \
+              "$(jq -cS '.publicAccessCidrs |= sort' <<< "$TEMP_CONFIG")" ]]
           }
+        
 
           discover_new_update() {
             local baseline="$1"
