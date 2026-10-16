@@ -1,38 +1,56 @@
 
 const express = require("express");
 const path = require("path");
+const cors = require("cors");
 
 function createApp(pool) {
     const app = express();
-    const cors = require("cors");
-    app.use(cors({
-        origin: [
-            "http://localhost:3000",
-            "http://127.0.0.1:3000"
-        ]
-    }));
 
+    // Allow the local storefront to call the AWS API
+    app.use(
+        cors({
+            origin: [
+                "http://localhost:3000",
+                "http://127.0.0.1:3000"
+            ]
+        })
+    );
 
+    app.use(express.json());
     app.use(express.static(path.join(__dirname, "public")));
 
-    // Get all products
+    // Get all products with complete product details
     app.get("/products", async (req, res) => {
         try {
-            const [rows] = await pool.query(
-                "SELECT id, name, price, stock, created_at FROM products"
-            );
+            const [rows] = await pool.query(`
+                SELECT
+                    id,
+                    name,
+                    price,
+                    stock,
+                    created_at,
+                    category,
+                    brand,
+                    description,
+                    image_url,
+                    discount_percent,
+                    rating,
+                    review_count
+                FROM products
+                ORDER BY id ASC
+            `);
 
-            res.json(rows);
+            return res.json(rows);
         } catch (error) {
             console.error("Database error:", error);
 
-            res.status(500).json({
+            return res.status(500).json({
                 error: "Failed to fetch products"
             });
         }
     });
 
-    // Get a single product by ID
+    // Get one product by ID
     app.get("/products/:id", async (req, res) => {
         const { id } = req.params;
 
@@ -47,11 +65,21 @@ function createApp(pool) {
 
         try {
             const [rows] = await pool.query(
-                `SELECT id, name, price, stock, created_at,
-                        category, brand, description, image_url,
-                        discount_percent, rating, review_count
-                FROM products
-                WHERE id = ?`,
+                `SELECT
+                    id,
+                    name,
+                    price,
+                    stock,
+                    created_at,
+                    category,
+                    brand,
+                    description,
+                    image_url,
+                    discount_percent,
+                    rating,
+                    review_count
+                 FROM products
+                 WHERE id = ?`,
                 [Number(id)]
             );
 
