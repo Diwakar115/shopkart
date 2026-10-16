@@ -398,5 +398,6 @@ jobs:
           helm upgrade --install shopkart helm/shopkart-chart \
             --namespace default \
             --set-string image.tag="$IMAGE_TAG" \
+            --force-conflicts \
             --wait \
             --timeout 180s
