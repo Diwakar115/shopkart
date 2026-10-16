@@ -1,40 +1,154 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ShopKart</title>
+    <meta name="theme-color" content="#172b24">
+    <meta name="description" content="Discover everyday essentials and great finds at ShopKart.">
+    <title>ShopKart — Find Your Everyday</title>
     <link rel="stylesheet" href="style.css">
+    <script src="app.js" defer></script>
 </head>
-
 <body>
-
-<header>
-    <div class="logo">🛒 ShopKart</div>
-
-    <div class="search">
-        <input type="text" placeholder="Search products..." id="searchInput">
+    <div class="announcement">
+        <span>✦</span> Your everyday finds, all in one place.
+        <span class="announcement-note">A little something for everyone.</span>
     </div>
 
-    <div class="cart">
-        🛍️ Cart <span id="cartCount">0</span>
-    </div>
-</header>
+    <header class="site-header">
+        <a class="brand" href="#" aria-label="ShopKart home">
+            <span class="brand-mark">s</span>
+            <span>shopkart<span class="brand-dot">.</span></span>
+        </a>
 
-<section class="hero">
-    <h1>Welcome to ShopKart</h1>
-    <p>Everything you need, all in one place.</p>
-</section>
+        <div class="search-box">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <input id="searchInput" type="search"
+                   placeholder="Search for something you love..."
+                   aria-label="Search products">
+            <kbd>Search</kbd>
+        </div>
 
-<main>
-    <h2>Our Products</h2>
+        <button class="cart-trigger" id="cartTrigger" type="button"
+                aria-label="Open shopping cart" aria-expanded="false">
+            <span class="bag-icon" aria-hidden="true">♧</span>
+            <span class="cart-label">My bag</span>
+            <span id="cartCount" class="cart-count">0</span>
+        </button>
+    </header>
 
-    <div id="products" class="products">
-        <p>Loading products...</p>
-    </div>
-</main>
+    <main>
+        <section class="hero">
+            <div class="hero-copy">
+                <span class="eyebrow"><span class="eyebrow-dot"></span> YOUR EVERYDAY, UPGRADED</span>
+                <h1>Good finds.<br>Great <span>everyday.</span></h1>
+                <p>From little essentials to things you didn't know you needed.
+                   Find your next favourite right here.</p>
+                <a href="#shop" class="primary-cta">Explore the collection <span>↗</span></a>
+                <div class="hero-note">
+                    <span class="avatar-stack"><i>✦</i><i>♡</i><i>✓</i></span>
+                    <span>Simple shopping. Happy living.</span>
+                </div>
+            </div>
 
-<script src="app.js"></script>
+            <div class="hero-art" aria-label="ShopKart shopping collection">
+                <div class="art-orbit orbit-one"></div>
+                <div class="art-orbit orbit-two"></div>
+                <div class="art-card art-card-back">
+                    <span>THE EVERYDAY EDIT</span>
+                    <div class="art-back-shape">✳</div>
+                </div>
+                <div class="art-card art-card-front">
+                    <div class="art-product">✦</div>
+                    <span class="art-caption">A GOOD THING</span>
+                    <strong>Made for your everyday.</strong>
+                </div>
+                <div class="floating-tag tag-top">✧ Good things inside</div>
+                <div class="floating-tag tag-bottom">YOUR NEXT FAVOURITE ↗</div>
+            </div>
+        </section>
 
+        <section class="benefits" aria-label="Shopping highlights">
+            <div><span>✳</span><p><strong>Everyday essentials</strong><small>Useful things, thoughtfully found</small></p></div>
+            <div><span>♡</span><p><strong>Find your favourites</strong><small>Discover something new</small></p></div>
+            <div><span>↗</span><p><strong>Easy browsing</strong><small>Your next find is a click away</small></p></div>
+        </section>
+
+        <section id="shop" class="shop-section">
+            <div class="section-heading">
+                <div>
+                    <span class="section-kicker">THE SHOP</span>
+                    <h2>Find your <span>thing.</span></h2>
+                    <p>A collection of things worth bringing home.</p>
+                </div>
+                <label class="sort-control">
+                    <span>Sort by</span>
+                    <select id="sortSelect" aria-label="Sort products">
+                        <option value="featured">Featured</option>
+                        <option value="price-low">Price: low to high</option>
+                        <option value="price-high">Price: high to low</option>
+                        <option value="name">Name: A to Z</option>
+                    </select>
+                </label>
+            </div>
+
+            <div id="categoryFilters" class="category-filters" aria-label="Filter by category">
+                <button class="category-chip active" data-category="all" type="button">Everything</button>
+                <button class="category-chip" data-category="electronics" type="button">Electronics</button>
+                <button class="category-chip" data-category="fashion" type="button">Fashion</button>
+                <button class="category-chip" data-category="home" type="button">Home & living</button>
+                <button class="category-chip" data-category="beauty" type="button">Beauty</button>
+                <button class="category-chip" data-category="other" type="button">Other finds</button>
+            </div>
+
+            <div class="products-meta">
+                <span id="productCount">Discover our collection</span>
+                <span class="live-label"><span></span> SHOP THE LATEST</span>
+            </div>
+
+            <div id="products" class="products-grid" aria-live="polite">
+                <div class="loading-state"><span class="loader"></span><p>Finding the good stuff...</p></div>
+            </div>
+            <div id="emptyState" class="empty-state" hidden>
+                <span>⌕</span>
+                <h3>No finds this time</h3>
+                <p>Try another search or choose a different category.</p>
+                <button id="clearFilters" class="secondary-button" type="button">Clear filters</button>
+            </div>
+        </section>
+
+        <section class="bottom-banner">
+            <div><span class="section-kicker">A GOOD PLACE TO START</span>
+                <h2>Your next favourite<br>is waiting.</h2></div>
+            <a href="#shop" class="banner-link">Find it at ShopKart <span>↗</span></a>
+            <span class="banner-sparkle">✳</span>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <a class="brand footer-brand" href="#"><span class="brand-mark">s</span><span>shopkart<span class="brand-dot">.</span></span></a>
+        <p>Good finds for everyday life.</p>
+        <span>© <span id="currentYear"></span> ShopKart</span>
+    </footer>
+
+    <div id="cartOverlay" class="cart-overlay" hidden></div>
+    <aside id="cartDrawer" class="cart-drawer" aria-label="Shopping cart"
+           aria-hidden="true" inert>
+        <div class="drawer-header">
+            <div><span class="section-kicker">YOUR PICKS</span><h2>Your bag <span id="drawerCount">(0)</span></h2></div>
+            <button id="closeCart" class="icon-button" type="button" aria-label="Close cart">×</button>
+        </div>
+        <div id="cartItems" class="cart-items">
+            <div class="cart-empty"><span>♡</span><h3>Your bag is taking a nap.</h3><p>Add something you love to get started.</p></div>
+        </div>
+        <div class="drawer-footer">
+            <div class="subtotal"><span>Subtotal</span><strong id="cartSubtotal">₹0</strong></div>
+            <p class="cart-disclaimer">Shipping and checkout can be connected in a future step.</p>
+            <button id="checkoutButton" class="checkout-button" type="button">Continue <span>→</span></button>
+        </div>
+    </aside>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 </html>
