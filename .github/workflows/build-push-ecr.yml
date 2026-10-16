@@ -9,6 +9,11 @@ permissions:
   contents: read
   id-token: write
 
+# Prevent overlapping workflow runs from changing the EKS allowlist.
+concurrency:
+  group: shopkart-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: shopkart-repo
@@ -23,13 +28,10 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Show GitHub repository identity
-        run: |
-          echo "Repository: ${{ github.repository }}"
-          echo "Repository ID: ${{ github.event.repository.id }}"
-          echo "Owner: ${{ github.repository_owner }}"
-          echo "Owner ID: ${{ github.event.repository.owner.id }}"
-          echo "Ref: ${{ github.ref }}"
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.3.1
 
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -51,16 +53,6 @@ jobs:
             -f ./application/Dockerfile \
             ./application
 
-
-      - name: Check Node and npm versions in image
-        run: |
-          docker run --rm "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" sh -c '
-            node --version
-            npm --version
-            npm ls -g brace-expansion undici --all || true
-          '
-
-
       - name: Scan Docker image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -75,21 +67,69 @@ jobs:
         run: |
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-
-      - name: Temporarily allow runner IP, deploy, and restore
+      - name: Deploy ShopKart using Helm
         shell: bash
         env:
-          ECR_REGISTRY: 382755779648.dkr.ecr.us-east-1.amazonaws.com
           IMAGE_TAG: ${{ github.sha }}-${{ github.run_attempt }}
         run: |
           set -Eeuo pipefail
 
-          REGION="us-east-1"
+          REGION="$AWS_REGION"
           CLUSTER="shopkart-eks"
-          UPDATE_ID=""
+
+          ORIGINAL_CONFIG=""
+          ORIGINAL_UPDATE_IDS="[]"
+          TEMP_UPDATE_ID=""
+          TEMP_CONFIG=""
           RESTORE_NEEDED="false"
 
-          wait_for_update() {
+          get_access_config() {
+            aws eks describe-cluster \
+              --name "$CLUSTER" \
+              --region "$REGION" \
+              --query 'cluster.resourcesVpcConfig.{endpointPublicAccess:endpointPublicAccess,endpointPrivateAccess:endpointPrivateAccess,publicAccessCidrs:publicAccessCidrs}' \
+              --output json
+          }
+
+          config_matches_original() {
+            local current_config=""
+            current_config="$(get_access_config 2>/dev/null)" || return 1
+
+            [[ "$(jq -cS . <<< "$current_config")" == "$(jq -cS . <<< "$ORIGINAL_CONFIG")" ]]
+          }
+
+          config_matches_temporary() {
+            local current_config=""
+            current_config="$(get_access_config 2>/dev/null)" || return 1
+
+            [[ "$(jq -cS . <<< "$current_config")" == "$(jq -cS . <<< "$TEMP_CONFIG")" ]]
+          }
+
+          discover_new_update() {
+            local baseline="$1"
+            local current_ids=""
+            local id=""
+
+            current_ids="$(aws eks list-updates \
+              --name "$CLUSTER" \
+              --region "$REGION" \
+              --query 'updateIds' \
+              --output json)" || return 1
+
+            while IFS= read -r id; do
+              [[ -z "$id" ]] && continue
+
+              if ! jq -e --arg id "$id" \
+                'index($id) != null' <<< "$baseline" >/dev/null; then
+                printf '%s' "$id"
+                return 0
+              fi
+            done < <(jq -r '.[]' <<< "$current_ids")
+
+            return 1
+          }
+
+          wait_for_update_success() {
             local id="$1"
             local status=""
 
@@ -99,19 +139,21 @@ jobs:
                 --region "$REGION" \
                 --update-id "$id" \
                 --query 'update.status' \
-                --output text)"
+                --output text)" || return 1
 
-              echo "EKS update status: $status"
+              echo "EKS update $id status: $status"
 
               case "$status" in
-                Successful) return 0 ;;
+                Successful)
+                  return 0
+                  ;;
                 Failed)
                   aws eks describe-update \
                     --name "$CLUSTER" \
                     --region "$REGION" \
                     --update-id "$id" \
                     --query 'update.errors' \
-                    --output json
+                    --output json || true
                   return 1
                   ;;
               esac
@@ -119,112 +161,242 @@ jobs:
               sleep 15
             done
 
-            echo "Timed out waiting for EKS update."
+            echo "::error::Timed out waiting for EKS update $id."
             return 1
+          }
+
+          wait_until_update_terminal() {
+            local id="$1"
+            local status=""
+
+            for attempt in $(seq 1 40); do
+              status="$(aws eks describe-update \
+                --name "$CLUSTER" \
+                --region "$REGION" \
+                --update-id "$id" \
+                --query 'update.status' \
+                --output text 2>/dev/null)" || {
+                  sleep 15
+                  continue
+                }
+
+              echo "Waiting for EKS update $id to finish: $status"
+
+              case "$status" in
+                Successful|Failed)
+                  return 0
+                  ;;
+              esac
+
+              sleep 15
+            done
+
+            echo "::error::Could not confirm completion of EKS update $id."
+            return 1
+          }
+
+          restore_original_config() {
+            local result="$1"
+            local restore_baseline="[]"
+            local restore_output=""
+            local restore_id=""
+            local restored="false"
+
+            echo "Restoring the original EKS endpoint access configuration..."
+
+            # Recover the temporary update ID if AWS accepted the request
+            # but the CLI did not return its response.
+            if [[ -z "$TEMP_UPDATE_ID" ]]; then
+              for attempt in $(seq 1 6); do
+                TEMP_UPDATE_ID="$(discover_new_update "$ORIGINAL_UPDATE_IDS" 2>/dev/null || true)"
+                [[ -n "$TEMP_UPDATE_ID" ]] && break
+                sleep 10
+              done
+            fi
+
+            if [[ -z "$TEMP_UPDATE_ID" ]]; then
+              if config_matches_original; then
+                echo "EKS endpoint configuration already matches the original configuration."
+                return "$result"
+              fi
+
+              echo "::error::Could not identify the temporary EKS update."
+              echo "::error::Inspect EKS update history and restore the original configuration manually if needed."
+              return 1
+            fi
+
+            if ! wait_until_update_terminal "$TEMP_UPDATE_ID"; then
+              echo "::error::The temporary EKS update may still be active. Check its status before changing endpoint access."
+              return 1
+            fi
+
+            # Never overwrite settings that differ from both snapshots.
+            if config_matches_original; then
+              echo "The original EKS endpoint configuration is already restored."
+              return "$result"
+            fi
+
+            if ! config_matches_temporary; then
+              echo "::error::EKS endpoint settings differ from both the saved original and the temporary configuration."
+              echo "::error::Refusing to overwrite a possible change made by another operator or process."
+              echo "::error::Inspect the cluster configuration and update history."
+              return 1
+            fi
+
+            restore_baseline="$(aws eks list-updates \
+              --name "$CLUSTER" \
+              --region "$REGION" \
+              --query 'updateIds' \
+              --output json)" || {
+                echo "::error::Could not snapshot EKS update history before restoration."
+                return 1
+              }
+
+            # Restore the original public access, private access and CIDRs.
+            if restore_output="$(aws eks update-cluster-config \
+              --name "$CLUSTER" \
+              --region "$REGION" \
+              --resources-vpc-config "$ORIGINAL_CONFIG" \
+              --output json 2>&1)"; then
+              restore_id="$(jq -r '.update.id // empty' <<< "$restore_output" 2>/dev/null || true)"
+            else
+              echo "::warning::Restoration request returned an error; checking whether AWS accepted it."
+            fi
+
+            # Recover a missing restoration ID when possible.
+            if [[ -z "$restore_id" ]]; then
+              for attempt in $(seq 1 6); do
+                restore_id="$(discover_new_update "$restore_baseline" 2>/dev/null || true)"
+                [[ -n "$restore_id" ]] && break
+
+                if config_matches_original; then
+                  restored="true"
+                  break
+                fi
+
+                sleep 10
+              done
+            fi
+
+            if [[ -n "$restore_id" ]]; then
+              if wait_until_update_terminal "$restore_id"; then
+                if config_matches_original; then
+                  restored="true"
+                fi
+              fi
+            fi
+
+            # Verify the actual configuration before reporting success.
+            if [[ "$restored" != "true" ]]; then
+              for attempt in $(seq 1 6); do
+                if config_matches_original; then
+                  restored="true"
+                  break
+                fi
+                sleep 10
+              done
+            fi
+
+            if [[ "$restored" != "true" ]]; then
+              echo "::error::Could not verify restoration of the original EKS endpoint configuration."
+              echo "::error::Inspect endpointPublicAccess, endpointPrivateAccess, publicAccessCidrs and update history immediately."
+              return 1
+            fi
+
+            echo "Original EKS endpoint access configuration restored and verified."
+            return "$result"
           }
 
           cleanup() {
             local result=$?
-            local restore_id=""
-            local restored="false"
+            local cleanup_result=0
 
             trap - EXIT
+            set +e
 
-            if [[ "$RESTORE_NEEDED" == "true" ]]; then
-              echo "Restoring original EKS public IP allowlist..."
-              set +e
+            if [[ "$RESTORE_NEEDED" != "true" ]]; then
+              exit "$result"
+            fi
 
-              # Finish waiting for the temporary update if necessary.
-              if [[ -n "$UPDATE_ID" ]]; then
-                for attempt in $(seq 1 40); do
-                  status="$(aws eks describe-update \
-                    --name "$CLUSTER" \
-                    --region "$REGION" \
-                    --update-id "$UPDATE_ID" \
-                    --query 'update.status' \
-                    --output text 2>/dev/null)"
+            restore_original_config "$result"
+            cleanup_result=$?
 
-                  if [[ "$status" != "InProgress" ]]; then
-                    break
-                  fi
-
-                  sleep 15
-                done
-              fi
-
-               restore_config="$(jq -cn \
-                --argjson cidrs "$ORIGINAL_CIDRS" \
-                '{endpointPublicAccess:true,endpointPrivateAccess:true,publicAccessCidrs:$cidrs}')"
-
-              restore_id="$(aws eks update-cluster-config \
-                --name "$CLUSTER" \
-                --region "$REGION" \
-                --resources-vpc-config "$restore_config" \
-                --query 'update.id' \
-                --output text 2>/dev/null)"
-
-              if [[ -n "$restore_id" ]]; then
-                wait_for_update "$restore_id"
-                if [[ $? -eq 0 ]]; then
-                  restored="true"
-                fi
-              fi
-
-              if [[ "$restored" != "true" ]]; then
-                echo "::error::Failed to confirm restoration. Check the EKS public access CIDRs immediately."
-                result=1
-              else
-                echo "Original EKS allowlist restored."
-              fi
+            if [[ "$cleanup_result" -ne "$result" ]]; then
+              exit 1
             fi
 
             exit "$result"
           }
 
-          trap cleanup EXIT
-
-          # Find the public IP used by this GitHub Actions runner.
           RUNNER_IP="$(curl -4 -fsS https://checkip.amazonaws.com | tr -d '\r\n')"
-          RUNNER_CIDR="${RUNNER_IP}/32"
-          echo "Runner CIDR: $RUNNER_CIDR"
 
-          # Save the current allowlist.
-          ORIGINAL_CIDRS="$(aws eks describe-cluster \
+          if [[ ! "$RUNNER_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            echo "::error::Could not determine a valid runner IPv4 address."
+            exit 1
+          fi
+
+          RUNNER_CIDR="${RUNNER_IP}/32"
+          echo "GitHub runner CIDR: $RUNNER_CIDR"
+
+          ORIGINAL_CONFIG="$(get_access_config)"
+
+          if [[ -z "$ORIGINAL_CONFIG" || "$(jq -r '.publicAccessCidrs == null' <<< "$ORIGINAL_CONFIG")" == "true" ]]; then
+            echo "::error::Could not retrieve the original EKS endpoint access configuration."
+            exit 1
+          fi
+
+          ORIGINAL_UPDATE_IDS="$(aws eks list-updates \
             --name "$CLUSTER" \
             --region "$REGION" \
-            --query 'cluster.resourcesVpcConfig.publicAccessCidrs' \
+            --query 'updateIds' \
             --output json)"
 
-          # Add the runner IP without removing existing allowed IPs.
+          ORIGINAL_CIDRS="$(jq -c '.publicAccessCidrs' <<< "$ORIGINAL_CONFIG")"
+
           NEW_CIDRS="$(jq -cn \
             --argjson original "$ORIGINAL_CIDRS" \
             --arg runner "$RUNNER_CIDR" \
-            'if ($original | index($runner)) then $original
-             else $original + [$runner] end')"
+            'if ($original | index($runner)) then $original else $original + [$runner] end')"
 
-          # Restore even if the update or deployment subsequently fails.
-          RESTORE_NEEDED="true"
+          # Temporarily allow the runner while preserving private access.
+          if [[ "$NEW_CIDRS" != "$ORIGINAL_CIDRS" ]] || \
+             [[ "$(jq -r '.endpointPublicAccess' <<< "$ORIGINAL_CONFIG")" != "true" ]]; then
 
-          UPDATE_ID="$(aws eks update-cluster-config \
-            --name "$CLUSTER" \
-            --region "$REGION" \
-            --resources-vpc-config \
-            "$(jq -cn --argjson cidrs "$NEW_CIDRS" \
-              '{endpointPublicAccess:true,endpointPrivateAccess:true,publicAccessCidrs:$cidrs}')" \
-            --query 'update.id' \
-            --output text)"
+            TEMP_CONFIG="$(jq -c \
+              --argjson cidrs "$NEW_CIDRS" \
+              '. + {endpointPublicAccess: true, publicAccessCidrs: $cidrs}' \
+              <<< "$ORIGINAL_CONFIG")"
 
-          wait_for_update "$UPDATE_ID"
+            RESTORE_NEEDED="true"
+            trap cleanup EXIT
 
-          # Configure kubectl and deploy the pushed ECR image.
+            if TEMP_OUTPUT="$(aws eks update-cluster-config \
+              --name "$CLUSTER" \
+              --region "$REGION" \
+              --resources-vpc-config "$TEMP_CONFIG" \
+              --output json)"; then
+              TEMP_UPDATE_ID="$(jq -r '.update.id // empty' <<< "$TEMP_OUTPUT")"
+            else
+              echo "::error::Temporary EKS endpoint update returned an error; cleanup will check update history."
+              exit 1
+            fi
+
+            if [[ -z "$TEMP_UPDATE_ID" ]]; then
+              echo "::error::AWS returned no update ID; cleanup will attempt recovery."
+              exit 1
+            fi
+
+            wait_for_update_success "$TEMP_UPDATE_ID"
+          else
+            echo "The GitHub runner is already allowed by the EKS public endpoint configuration."
+          fi
+
           aws eks update-kubeconfig \
             --name "$CLUSTER" \
             --region "$REGION"
 
-          kubectl set image deployment/shopkart \
-            shopkart="$ECR_REGISTRY/shopkart-repo:$IMAGE_TAG" \
-            -n default
-
-          kubectl rollout status deployment/shopkart \
-            -n default \
-            --timeout=180s
+          helm upgrade --install shopkart helm/shopkart-chart \
+            --namespace default \
+            --set-string image.tag="$IMAGE_TAG" \
+            --wait \
+            --timeout 180s

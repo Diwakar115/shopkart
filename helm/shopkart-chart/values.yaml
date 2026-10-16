@@ -1,0 +1,39 @@
+replicaCount: 2
+
+image:
+  repository: 382755779648.dkr.ecr.us-east-1.amazonaws.com/shopkart-repo
+  tag: "049d34792ab1a5945696f5d938bcab66b2c4ce53-1"
+  pullPolicy: IfNotPresent
+
+service:
+  name: shopkart-service
+  type: LoadBalancer
+  port: 80
+  targetPort: 3000
+
+database:
+  existingSecret: shopkart-db-secret
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  readiness:
+    path: /
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  liveness:
+    path: /
+    initialDelaySeconds: 15
+    periodSeconds: 20
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 50
