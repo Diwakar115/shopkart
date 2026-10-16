@@ -4,6 +4,14 @@ const path = require("path");
 
 function createApp(pool) {
     const app = express();
+    const cors = require("cors");
+    app.use(cors({
+        origin: [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000"
+        ]
+    }));
+
 
     app.use(express.static(path.join(__dirname, "public")));
 
@@ -39,9 +47,11 @@ function createApp(pool) {
 
         try {
             const [rows] = await pool.query(
-                `SELECT id, name, price, stock, created_at
-                 FROM products
-                 WHERE id = ?`,
+                `SELECT id, name, price, stock, created_at,
+                        category, brand, description, image_url,
+                        discount_percent, rating, review_count
+                FROM products
+                WHERE id = ?`,
                 [Number(id)]
             );
 
