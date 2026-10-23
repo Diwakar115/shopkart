@@ -46,10 +46,6 @@ Docker, Kubernetes, CI/CD, monitoring, and security best practices.
 - Git
 - GitHub
 
-## Project Status
-
-Currently setting up the project repository and Terraform workflow.
-
 ## Architecture
 
 Architecture documentation will be added as the project progresses.
